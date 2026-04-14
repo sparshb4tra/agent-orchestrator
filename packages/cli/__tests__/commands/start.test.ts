@@ -908,6 +908,63 @@ describe("start command — orchestrator session strategy display", () => {
     expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
   });
 
+  it("creates a new orchestrator when all existing sessions use a different agent", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestrator: { agent: "codex" } }),
+    });
+
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator", agent: "claude-code" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-session-existing" },
+      },
+    ]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator-2",
+      runtimeHandle: { id: "tmux-session-2" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledTimes(1);
+    expect(output).toContain("ao session attach app-orchestrator-2");
+    expect(output).not.toContain("Using existing orchestrator session: app-orchestrator");
+  });
+
+  it("reuses only compatible orchestrators when mixed-agent sessions exist", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestrator: { agent: "codex" } }),
+    });
+
+    const now = new Date();
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        metadata: { role: "orchestrator", agent: "claude-code" },
+        lastActivityAt: now,
+        runtimeHandle: { id: "tmux-session-1" },
+      },
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        metadata: { role: "orchestrator", agent: "codex" },
+        lastActivityAt: new Date(now.getTime() - 1000),
+        runtimeHandle: { id: "tmux-session-2" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+    expect(output).toContain("ao session attach app-orchestrator-2");
+  });
+
   it("navigates directly to session page when one existing orchestrator found with dashboard enabled", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 

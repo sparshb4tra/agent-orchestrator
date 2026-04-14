@@ -1037,27 +1037,53 @@ async function runStartup(
         isOrchestratorSession(s, project.sessionPrefix ?? projectId, allSessionPrefixes) &&
         !isTerminalSession(s),
     );
+    const configuredOrchestratorAgent =
+      project.orchestrator?.agent ?? project.agent ?? config.defaults.agent;
+    const compatibleExistingOrchestrators = existingOrchestrators.filter((session) => {
+      const persistedAgent = session.metadata?.["agent"];
+      return persistedAgent === undefined || persistedAgent === configuredOrchestratorAgent;
+    });
+    const driftedOrchestrators = existingOrchestrators.filter((session) => {
+      const persistedAgent = session.metadata?.["agent"];
+      return persistedAgent !== undefined && persistedAgent !== configuredOrchestratorAgent;
+    });
 
-    if (existingOrchestrators.length > 0) {
+    if (compatibleExistingOrchestrators.length > 0) {
       // Existing orchestrators found — always auto-select the most recently active one.
       // With a single orchestrator, navigate directly to its session page.
       // With multiple orchestrators, keep the selection page so the user can choose or spawn a
       // new one — the dashboard only links to one orchestrator per project, so the selection page
       // is the only startup path for multi-orchestrator projects.
-      const sortedOrchestrators = [...existingOrchestrators].sort(
+      const sortedOrchestrators = [...compatibleExistingOrchestrators].sort(
         (a, b) => (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
       );
       const selected = sortedOrchestrators[0];
       selectedOrchestratorId = selected.id;
-      if (opts?.dashboard !== false && existingOrchestrators.length > 1) {
+      if (opts?.dashboard !== false && compatibleExistingOrchestrators.length > 1) {
         hasExistingOrchestrators = true;
       }
       spinner.succeed(
         `Using existing orchestrator session: ${selected.id}` +
-          (existingOrchestrators.length > 1
-            ? ` (${existingOrchestrators.length - 1} other session(s) available)` : ""),
+          (compatibleExistingOrchestrators.length > 1
+            ? ` (${compatibleExistingOrchestrators.length - 1} other session(s) available)` : "") +
+          (driftedOrchestrators.length > 0
+            ? ` (${driftedOrchestrators.length} session(s) ignored due to agent mismatch)` : ""),
       );
     } else {
+      if (driftedOrchestrators.length > 0) {
+        const previousAgents = Array.from(
+          new Set(
+            driftedOrchestrators
+              .map((session) => session.metadata?.["agent"])
+              .filter((agent): agent is string => Boolean(agent)),
+          ),
+        )
+          .sort()
+          .join(", ");
+        spinner.info(
+          `Configured orchestrator agent '${configuredOrchestratorAgent}' differs from existing session agent(s): ${previousAgents}. Creating a new orchestrator session.`,
+        );
+      }
       // No existing orchestrators — spawn a new one
       try {
         spinner.start("Creating orchestrator session");
